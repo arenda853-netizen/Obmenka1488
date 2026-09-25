@@ -1,71 +1,63 @@
-// Простой бэкенд для хранения аккаунтов (ник + пароль) сайта obmenka.
-// Эндпоинты соответствуют тому, что уже ждёт фронтенд (ACCOUNTS_API_URL в obmenka-improved.html):
-//   GET  /accounts/:nickname  -> {nickname, password} или 404, если не найден
-//   POST /accounts            -> body {nickname, password}, создаёт запись, 409 если ник занят
-
-const express = require("express");
-const cors = require("cors");
-const fs = require("fs");
-const path = require("path");
-
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const USERS_FILE = path.join(__dirname, "users.json");
 
-app.use(cors()); // разрешаем запросы с любого origin (в т.ч. с вашего Netlify-домена)
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// --- Работа с users.json как с простой базой ---
+// Раздаем статические файлы (HTML, CSS, JS) из корневой папки
+app.use(express.static(path.join(__dirname)));
+
+// Автоматический перенос с главной страницы на интерфейс
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'obmenka-improved.html'));
+});
+
+// Путь к файлу пользователей для локальной авторизации
+const USERS_FILE = path.join(__dirname, 'users.json');
+
 function readUsers() {
-  try {
-    if (!fs.existsSync(USERS_FILE)) return {};
-    const raw = fs.readFileSync(USERS_FILE, "utf8");
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    console.error("Ошибка чтения users.json:", e);
-    return {};
-  }
+    if (!fs.existsSync(USERS_FILE)) {
+        fs.writeFileSync(USERS_FILE, JSON.stringify([]));
+    }
+    try {
+        const data = fs.readFileSync(USERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (e) {
+        return [];
+    }
 }
 
 function writeUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf8");
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
-// Проверка живости сервера (полезно для Render health-check)
-app.get("/", (req, res) => {
-  res.json({ ok: true, service: "obmenka-accounts-server" });
+app.post('/api/register', (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: 'Заполните все поля' });
+    }
+    const users = readUsers();
+    if (users.find(u => u.username === username)) {
+        return res.status(400).json({ success: false, message: 'Пользователь уже существует' });
+    }
+    users.push({ username, password });
+    writeUsers(users);
+    res.json({ success: true, message: 'Регистрация успешна' });
 });
 
-// Найти аккаунт по нику
-app.get("/accounts/:nickname", (req, res) => {
-  const nickname = (req.params.nickname || "").trim().toLowerCase();
-  const users = readUsers();
-  const account = users[nickname];
-  if (!account) {
-    return res.status(404).json({ error: "not_found" });
-  }
-  res.json(account);
-});
-
-// Создать новый аккаунт
-app.post("/accounts", (req, res) => {
-  const nickname = (req.body && req.body.nickname ? String(req.body.nickname) : "").trim().toLowerCase();
-  const password = req.body && req.body.password ? String(req.body.password) : "";
-
-  if (!nickname || !password) {
-    return res.status(400).json({ error: "nickname_and_password_required" });
-  }
-
-  const users = readUsers();
-  if (users[nickname]) {
-    return res.status(409).json({ error: "nickname_taken" });
-  }
-
-  users[nickname] = { nickname, password };
-  writeUsers(users);
-  res.status(201).json({ ok: true, nickname });
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    const users = readUsers();
+    const user = users.find(u => u.username === username && u.password === password);
+    if (!user) {
+        return res.status(400).json({ success: false, message: 'Неверный логин или пароль' });
+    }
+    res.json({ success: true, message: 'Вход выполнен успешно' });
 });
 
 app.listen(PORT, () => {
-  console.log(`Accounts server running on port ${PORT}`);
+    console.log(`Сервер запущен на порту ${PORT}`);
 });
